@@ -34,7 +34,7 @@ lines = file_to_read
 |> read_file.()
 |> String.split("\n")
 
-boilerplate = """
+contains_boilerplate = """
 local function contains(array, item)
 	for _, part in ipairs(array) do
 		if part == item then return true end
@@ -42,30 +42,59 @@ local function contains(array, item)
 	return false
 end
 
-local function isBlank(str)
-    if type(str) == "number" then
-        error("You cannot check if a number is blank. You passed an integer to isBlank()")
-    end
-
-    if str == nil then return true end
-    if str == false then return true end
-    if str == "" then return true end
-
-    local trimmed = str:match("^%s*(.-)%s*$")
-    if trimmed == "" then return true end
-
-    return false
-end
 """
+
+blank_boilerplate = """
+local function isBlank(str)
+  if type(str) == "number" then
+      error("You cannot check if a number is blank. You passed an integer to isBlank()")
+  end
+
+  if str == nil then return true end
+  if str == false then return true end
+  if str == "" then return true end
+
+  local trimmed = str:match("^%s*(.-)%s*$")
+  if trimmed == "" then return true end
+
+  return false
+end
+
+-- end Hiramasa boilerplate
+
+"""
+
 
 new_lines = Enum.map(lines, fn line ->
   line
-  |> then(&Regex.replace(~r/(\w+)\.(includes|has|contains)\?\(?(\w+)\)?/, &1, "contains(\\1, \\2)")) # Array.includes?("foo")
+  |> then(&Regex.replace(~r/(\w+)\.(includes|has|contains)\?\(?(\w+)\)?/, &1, "contains(\\1, \\3)")) # Array.includes?("foo")
   |> then(&Regex.replace(~r/(foreach|for) (\w+) in (\w+) do/, &1, "for _, \\2 in ipairs(\\3) do")) # foreach song in album do
   |> then(&Regex.replace(~r/(\w+)\.blank\?/, &1, "isBlank(\\1)")) # String.blank?
+  |> then(&Regex.replace(~r/(\w+) = io\.open!\(("[^"]+"), ("[^"]+")\)/, &1, """
+  \\1 = io.open(\\2, \\3)
+
+  if not \\1 then
+	  print("Error: Could not open file " .. \\2 .. " Are you sure it exists in this context?")
+    os.exit(1)
+  end
+  """)) # io.open!
+  |> then(&Regex.replace(~r/\.nil\?/, &1, " == nil")) # .nil?
 end) |> Enum.join("\n")
 
 file = "hiramasa.lua"
 
-boilerplate <> new_lines
-|> write_out.(file)
+output = cond do
+  Enum.any?(lines, fn line -> String.contains?(line, ~w[includes? has? contains?]) end) and
+  Enum.any?(lines, fn line -> String.contains?(line, ".blank?") end) ->
+    contains_boilerplate <> blank_boilerplate <> new_lines
+
+  Enum.any?(lines, fn line -> String.contains?(line, ~w[includes? has? contains?]) end) ->
+    contains_boilerplate <> new_lines
+  Enum.any?(lines, fn line -> String.contains?(line, ".blank?") end) ->
+    blank_boilerplate <> new_lines
+  true ->
+    new_lines
+end
+
+
+write_out.(output, file)
